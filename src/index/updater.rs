@@ -7,6 +7,7 @@ use {
 };
 
 mod inscription_updater;
+mod xdns_sync;
 
 struct BlockData {
   header: BlockHeader,
@@ -480,6 +481,7 @@ impl Updater {
         }
 
         self.index_transaction_sats(
+          &index,
           tx,
           *txid,
           &mut sat_to_satpoint,
@@ -495,6 +497,7 @@ impl Updater {
 
       if let Some((tx, txid)) = block.txdata.get(0) {
         self.index_transaction_sats(
+          &index,
           tx,
           *txid,
           &mut sat_to_satpoint,
@@ -533,7 +536,7 @@ impl Updater {
       }
     } else {
       for (tx, txid) in block.txdata.iter().skip(1).chain(block.txdata.first()) {
-        inscription_updater.index_transaction_inscriptions(tx, *txid, None)?;
+        inscription_updater.index_transaction_inscriptions(&index, tx, *txid, None)?;
       }
     }
 
@@ -559,6 +562,7 @@ impl Updater {
 
   fn index_transaction_sats(
     &mut self,
+    index: &Index,
     tx: &Transaction,
     txid: Txid,
     sat_to_satpoint: &mut Table<u64, &SatPointValue>,
@@ -569,7 +573,7 @@ impl Updater {
     index_inscriptions: bool,
   ) -> Result {
     if index_inscriptions {
-      inscription_updater.index_transaction_inscriptions(tx, txid, Some(input_sat_ranges))?;
+      inscription_updater.index_transaction_inscriptions(index, tx, txid, Some(input_sat_ranges))?;
     }
 
     for (vout, output) in tx.output.iter().enumerate() {

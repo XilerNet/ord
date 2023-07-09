@@ -1,4 +1,6 @@
 use {super::*, inscription::Curse};
+use crate::inscription::TransactionInscription;
+use crate::index::updater::xdns_sync::new_inscription_blocking;
 
 #[derive(Debug, Clone)]
 pub(super) struct Flotsam {
@@ -38,6 +40,8 @@ pub(super) struct InscriptionUpdater<'a, 'db, 'tx> {
   timestamp: u32,
   pub(super) unbound_inscriptions: u64,
   value_cache: &'a mut HashMap<OutPoint, u64>,
+  current_tx: Option<Transaction>,
+  inscriptions_cache: HashMap<InscriptionId, TransactionInscription>,
 }
 
 impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
@@ -94,11 +98,14 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       timestamp,
       unbound_inscriptions,
       value_cache,
+      inscriptions_cache: HashMap::new(),
+      current_tx: None,
     })
   }
 
   pub(super) fn index_transaction_inscriptions(
     &mut self,
+    index: &Index,
     tx: &Transaction,
     txid: Txid,
     input_sat_ranges: Option<&VecDeque<(u64, u64)>>,
@@ -108,6 +115,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     let mut inscribed_offsets = BTreeMap::new();
     let mut input_value = 0;
     let mut id_counter = 0;
+
+    self.current_tx = Some(tx.clone());
 
     for (input_index, tx_in) in tx.input.iter().enumerate() {
       // skip subsidy since no inscriptions possible
@@ -232,7 +241,6 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             unbound
           );
         }
-
         floating_inscriptions.push(Flotsam {
           inscription_id,
           offset,
@@ -242,6 +250,10 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             unbound,
           },
         });
+
+        self
+          .inscriptions_cache
+          .insert(inscription_id, inscription.clone());
 
         new_inscriptions.next();
         id_counter += 1;
@@ -310,6 +322,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
         };
 
         self.update_inscription_location(
+          &index,
           input_sat_ranges,
           inscriptions.next().unwrap(),
           new_satpoint,
@@ -333,7 +346,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
           outpoint: OutPoint::null(),
           offset: self.lost_sats + flotsam.offset - output_value,
         };
-        self.update_inscription_location(input_sat_ranges, flotsam, new_satpoint)?;
+        self.update_inscription_location(&index, input_sat_ranges, flotsam, new_satpoint)?;
       }
       self.lost_sats += self.reward - output_value;
       Ok(())
@@ -369,6 +382,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
   fn update_inscription_location(
     &mut self,
+    index: &Index,
     input_sat_ranges: Option<&VecDeque<(u64, u64)>>,
     flotsam: Flotsam,
     new_satpoint: SatPoint,
@@ -445,6 +459,36 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     } else {
       new_satpoint.store()
     };
+
+    let inscription = self.inscriptions_cache.get(&flotsam.inscription_id);
+
+    if let Some(transaction) = &self.current_tx {
+      let address = transaction
+        .output
+        .clone()
+        .into_iter()
+        .nth(new_satpoint.outpoint.vout.try_into().unwrap())
+        .and_then(|tx_out| {
+          Chain::Mainnet
+            .address_from_script(&tx_out.script_pubkey)
+            .ok()
+        });
+
+      let client = index.options.bitcoin_rpc_client()?;
+
+      if let Some(address) = &address {
+        let master_wallet = client.get_wallet_info()?;
+        println!("Master wallet: {:?}", master_wallet);
+      }
+
+      new_inscription_blocking(
+        &flotsam.inscription_id,
+        inscription,
+        address,
+      );
+    } else {
+      panic!("No current transaction!")
+    }
 
     self.satpoint_to_id.insert(&satpoint, &inscription_id)?;
     self.id_to_satpoint.insert(&inscription_id, &satpoint)?;

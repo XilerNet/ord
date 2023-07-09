@@ -10,3 +10,10 @@
 /target
 /test-times.txt
 /tmp
+
+EMPTY.txt
+empty-out.txt
+with-dns-records.txt
+with-validity-out.txt
+with-validity.txt
+
