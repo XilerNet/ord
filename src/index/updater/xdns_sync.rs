@@ -58,15 +58,10 @@ async fn is_action_allowed(db: &db::Repository, action: &DomainAction, buffer: &
     DomainAction::Data(Data { domain, .. }) => Some(domain.to_string()),
   };
 
-  println!("Action domain: {:?}", action_domain);
-
   let mut tmp_domain = buffer.lock().unwrap();
 
   if let Some(action_domain) = action_domain {
     if let Some(expected_domain) = tmp_domain.clone() {
-      println!("Action domain: {:?}", action_domain);
-      println!("Expected domain: {:?}", expected_domain);
-      println!("Equal: {:?}", action_domain == expected_domain);
       if action_domain != expected_domain {
         return false;
       }
@@ -97,7 +92,8 @@ pub(crate) async fn new_inscription(
   let content_type = tx.inscription.content_type().unwrap_or("unknown");
 
   println!(
-    "New inscription from {} with content type {}",
+    "New inscription with id {} from {} with content type {}",
+    id,
     address,
     content_type
   );
@@ -124,18 +120,14 @@ pub(crate) async fn new_inscription(
   let signature_required = !is_no_signature_required(&parsed.actions);
 
   if parsed.signature.is_none() && signature_required {
-    println!("Signature required but not provided");
     return;
   }
-  println!("Signature found: {:?}", parsed.signature);
 
   let tmp_domain: Mutex<Option<String>> = Mutex::new(None);
   let mut actions = Vec::new();
 
   for action in parsed.actions {
-    println!("Action: {:?}", action);
     if !is_action_allowed(&db, &action, &tmp_domain).await {
-      println!("Action not allowed");
       return;
     }
 
@@ -147,9 +139,7 @@ pub(crate) async fn new_inscription(
   drop(tmp_domain);
 
   if signature_required {
-    println!("Signature: {:?} Domain: {:?}", parsed.signature, domain);
     if parsed.signature.is_none() || domain.is_none() {
-      println!("Signature required but not provided");
       return;
     }
 
@@ -159,19 +149,16 @@ pub(crate) async fn new_inscription(
     let validity = db.get_validity(&domain).await;
 
     if validity.is_err() {
-      println!("Validity not found");
       return;
     }
 
     let validity = validity.unwrap();
 
     if validity.0 != address.to_string() {
-      println!("Address does not match");
       return;
     }
 
     if !signature.is_valid(validity.1.credentials) {
-      println!("Signature is not valid");
       return;
     }
   }
@@ -210,6 +197,8 @@ pub(crate) async fn new_inscription(
           println!("Removed subdomain with inscription id {} for address {}", inscription, address);
           return;
         }
+
+        println!("Failed to remove domain or subdomain with inscription id {} for address {}", inscription, address);
       }
       DomainAction::Validity(validity) => {
         let domain = validity.domain.clone();

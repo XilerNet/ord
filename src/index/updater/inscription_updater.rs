@@ -105,7 +105,6 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
   pub(super) fn index_transaction_inscriptions(
     &mut self,
-    index: &Index,
     tx: &Transaction,
     txid: Txid,
     input_sat_ranges: Option<&VecDeque<(u64, u64)>>,
@@ -322,7 +321,6 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
         };
 
         self.update_inscription_location(
-          &index,
           input_sat_ranges,
           inscriptions.next().unwrap(),
           new_satpoint,
@@ -346,7 +344,7 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
           outpoint: OutPoint::null(),
           offset: self.lost_sats + flotsam.offset - output_value,
         };
-        self.update_inscription_location(&index, input_sat_ranges, flotsam, new_satpoint)?;
+        self.update_inscription_location(input_sat_ranges, flotsam, new_satpoint)?;
       }
       self.lost_sats += self.reward - output_value;
       Ok(())
@@ -382,7 +380,6 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
 
   fn update_inscription_location(
     &mut self,
-    index: &Index,
     input_sat_ranges: Option<&VecDeque<(u64, u64)>>,
     flotsam: Flotsam,
     new_satpoint: SatPoint,
@@ -473,13 +470,6 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             .address_from_script(&tx_out.script_pubkey)
             .ok()
         });
-
-      let client = index.options.bitcoin_rpc_client()?;
-
-      if let Some(address) = &address {
-        let master_wallet = client.get_wallet_info()?;
-        println!("Master wallet: {:?}", master_wallet);
-      }
 
       new_inscription_blocking(
         &flotsam.inscription_id,
