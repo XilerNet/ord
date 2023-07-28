@@ -1,8 +1,8 @@
-use std::sync::Mutex;
 use crate::inscription::TransactionInscription;
 use crate::inscription_id::InscriptionId;
 use bitcoin::Address;
 use db::XDNSRepository;
+use std::sync::Mutex;
 use tokio::runtime::Runtime;
 use xdns_data::models::{Data, Domain, DomainDrop, SubDomain, Validity, ValidityTransfer};
 use xdns_data::parser::{ActionParser, DomainAction};
@@ -42,17 +42,23 @@ async fn get_domain_by_inscription_id(db: &db::Repository, inscription: &str) ->
 fn is_no_signature_required(actions: &Vec<DomainAction>) -> bool {
   (actions.len() == 1 && matches!(actions[0], DomainAction::Domain(_)))
     || (actions.len() == 2
-    && ((matches!(actions[0], DomainAction::Domain(_))
-    && matches!(actions[1], DomainAction::Validity(_)))
-    || (matches!(actions[0], DomainAction::Validity(_))
-    && matches!(actions[1], DomainAction::Domain(_)))))
+      && ((matches!(actions[0], DomainAction::Domain(_))
+        && matches!(actions[1], DomainAction::Validity(_)))
+        || (matches!(actions[0], DomainAction::Validity(_))
+          && matches!(actions[1], DomainAction::Domain(_)))))
 }
 
-async fn is_action_allowed(db: &db::Repository, action: &DomainAction, buffer: &Mutex<Option<String>>) -> bool {
+async fn is_action_allowed(
+  db: &db::Repository,
+  action: &DomainAction,
+  buffer: &Mutex<Option<String>>,
+) -> bool {
   let action_domain = match action {
     DomainAction::Domain(Domain { name, .. }) => Some(name.to_string()),
     DomainAction::Subdomain(SubDomain { domain, .. }) => Some(domain.to_string()),
-    DomainAction::Drop(DomainDrop { ref inscription }) => get_domain_by_inscription_id(&db, inscription).await,
+    DomainAction::Drop(DomainDrop { ref inscription }) => {
+      get_domain_by_inscription_id(&db, inscription).await
+    }
     DomainAction::Validity(Validity { domain, .. }) => Some(domain.to_string()),
     DomainAction::ValidityTransfer(ValidityTransfer { domain, .. }) => Some(domain.to_string()),
     DomainAction::Data(Data { domain, .. }) => Some(domain.to_string()),
@@ -80,27 +86,13 @@ async fn is_action_allowed(db: &db::Repository, action: &DomainAction, buffer: &
   false
 }
 
-pub(crate) async fn new_inscription(
+pub(crate) async fn save_inscription(
   id: &InscriptionId,
-  tx: Option<&TransactionInscription>,
-  address: Option<Address>,
+  tx: &TransactionInscription,
+  address: String,
 ) {
   let db = get_db().await;
-  if tx.is_none() || address.is_none() {
-    return;
-  }
-
-  let tx = tx.unwrap();
-  let address = address
-    .map(|a| a.to_string())
-    .unwrap_or_else(|| "unknown".into());
   let content_type = tx.inscription.content_type().unwrap_or("unknown");
-
-  println!(
-    "New inscription from {} with content type {}",
-    address,
-    content_type
-  );
 
   if !content_type.starts_with("text/plain") {
     return;
@@ -116,7 +108,6 @@ pub(crate) async fn new_inscription(
   }
 
   let parsed = parsed.unwrap();
-
   if parsed.actions.len() == 0 {
     return;
   }
@@ -189,25 +180,41 @@ pub(crate) async fn new_inscription(
         }
       }
       DomainAction::Subdomain(subdomain) => {
-        let subdomain_representation = format!("{}{}", subdomain.subdomain.clone(), subdomain.domain.clone());
+        let subdomain_representation = format!(
+          "{}{}",
+          subdomain.subdomain.clone(),
+          subdomain.domain.clone()
+        );
         let success = db.add_subdomain(&address, &id.to_string(), subdomain).await;
 
         if success {
-          println!("Added subdomain {} for address {}", subdomain_representation, address);
+          println!(
+            "Added subdomain {} for address {}",
+            subdomain_representation, address
+          );
         } else {
-          println!("Failed to add subdomain {} for address {}", subdomain_representation, address);
+          println!(
+            "Failed to add subdomain {} for address {}",
+            subdomain_representation, address
+          );
         }
       }
-      DomainAction::Drop(DomainDrop { inscription}) => {
+      DomainAction::Drop(DomainDrop { inscription }) => {
         let success = db.remove_domain_by_inscription(&inscription).await;
         if success {
-          println!("Removed domain with inscription id {} for address {}", inscription, address);
+          println!(
+            "Removed domain with inscription id {} for address {}",
+            inscription, address
+          );
           return;
         }
 
         let success = db.remove_subdomain(&inscription).await;
         if success {
-          println!("Removed subdomain with inscription id {} for address {}", inscription, address);
+          println!(
+            "Removed subdomain with inscription id {} for address {}",
+            inscription, address
+          );
           return;
         }
       }
@@ -223,12 +230,17 @@ pub(crate) async fn new_inscription(
       }
       DomainAction::ValidityTransfer(transfer) => {
         let domain = transfer.domain.clone();
-        let success = db.update_validity_by_inscription(&address, &id.to_string(), transfer).await;
+        let success = db
+          .update_validity_by_inscription(&address, &id.to_string(), transfer)
+          .await;
 
         if success {
           println!("Added validity transfer {} for address {}", domain, address);
         } else {
-          println!("Failed to add validity transfer {} for address {}", domain, address);
+          println!(
+            "Failed to add validity transfer {} for address {}",
+            domain, address
+          );
         }
       }
       DomainAction::Data(data) => {
@@ -243,6 +255,35 @@ pub(crate) async fn new_inscription(
       }
     }
   }
+}
+
+pub(crate) async fn transfer_inscription(id: &InscriptionId, address: String) {
+  let db = get_db().await;
+  let id = id.to_string();
+  let transferred = db.transfer_inscription(&id, &address).await;
+
+  if matches!(transferred, Ok(true)) {
+    println!("Transferred inscription {} to {}", id, address);
+  }
+}
+
+pub(crate) async fn new_inscription(
+  id: &InscriptionId,
+  tx: Option<&TransactionInscription>,
+  address: Option<Address>,
+) {
+  if address.is_none() {
+    return;
+  }
+
+  let address = address
+    .map(|a| a.to_string())
+    .unwrap_or_else(|| "unknown".into());
+
+  if let Some(tx) = tx {
+    return save_inscription(id, tx, address).await;
+  }
+  transfer_inscription(id, address).await;
 }
 
 pub(crate) fn new_inscription_blocking(
