@@ -95,7 +95,6 @@ pub(crate) async fn save_inscription(
 
   let content = tx.inscription.body().unwrap_or(&[]);
   let content = String::from_utf8_lossy(content).to_string();
-  println!("Content: {}", content);
   let parsed = ActionParser::parse(&content);
 
   if parsed.is_err() {
@@ -186,6 +185,9 @@ pub(crate) async fn save_inscription(
         }
       }
       DomainAction::Drop(DomainDrop { inscription }) => {
+        // TODO: Work out how to prevent a domain from being droppped if it has been traded and
+        // has no validity set
+        return;
         let success = db.remove_domain_by_inscription(&inscription).await;
         if success {
           println!(
